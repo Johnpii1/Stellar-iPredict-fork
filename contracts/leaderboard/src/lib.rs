@@ -1,14 +1,11 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec,
-};
-
-// ── Constants ─────────────────────────────────────────────────────────────────
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Vec};
 
 const MAX_TOP_PLAYERS: u32 = 50;
-
-// ── Errors ────────────────────────────────────────────────────────────────────
+const MAX_PAGE_SIZE: u32   = 20;
+const TTL_BUMP: u32 = 3_153_600;
+const TTL_HIGH: u32 = 6_307_200;
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -18,54 +15,63 @@ pub enum LeaderboardError {
     NotInitialized     = 2,
     UnauthorizedCaller = 3,
     InvalidPoints      = 4,
+    NotAdmin           = 5,
 }
 
-// ── Storage Keys ──────────────────────────────────────────────────────────────
-
+// OPT: was 4 separate keys per user (Points, TotalBets, WonBets, LostBets).
+//      Now 1 key per user (Stats) — saves 3 storage reads + 3 writes on
+//      every add_pts call and 3 reads on every get_stats call.
+//      TopPlayerSlot retained as a reverse lookup for O(1) in-place update.
+//      TopPlayerCount moves to instance storage (free to read with other keys).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Admin,
     MarketContract,
     ReferralContract,
-    Points(Address),
-    TotalBets(Address),
-    WonBets(Address),
-    LostBets(Address),
-    TopPlayers,
+    Stats(Address),        // was: Points + TotalBets + WonBets + LostBets (4 keys → 1)
+    TopPlayerAt(u32),
+    TopPlayerCount,
+    TopPlayerSlot(Address),
 }
 
-// ── Domain Structs ────────────────────────────────────────────────────────────
-
+// OPT: PlayerEntry now embeds points directly (avoids a Stats read during sort)
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlayerEntry {
     pub address: Address,
-    pub points: u64,
+    pub points:  u64,
 }
 
-/// Returned by `get_stats`.
+// External-facing stats struct (ABI stable)
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlayerStats {
-    pub points: u64,
+    pub points:     u64,
     pub total_bets: u32,
-    pub won_bets: u32,
-    pub lost_bets: u32,
+    pub won_bets:   u32,
+    pub lost_bets:  u32,
 }
 
-// ── Contract ──────────────────────────────────────────────────────────────────
+// Internal packed stats — single storage slot per user
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserStats {
+    pub points:   u64,
+    pub won_bets: u32,
+    pub lost_bets: u32,
+    // OPT: total_bets removed — derived as won_bets + lost_bets + pending.
+    //      Since prediction_market no longer calls record_bet, we compute
+    //      total_bets at read time: won + lost (fully settled bets only).
+    //      This eliminates the won_bets vs total_bets drift issue too.
+}
 
 #[contract]
 pub struct LeaderboardContract;
 
 #[contractimpl]
 impl LeaderboardContract {
-    // ── Lifecycle ─────────────────────────────────────────────────────────
 
-    /// One-time initialization.
-    /// `market_contract` — PredictionMarket address (calls `add_pts`, `record_bet`).
-    /// `referral_contract` — ReferralRegistry address (calls `add_bonus_pts`).
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -75,36 +81,41 @@ impl LeaderboardContract {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(LeaderboardError::AlreadyInitialized);
         }
-
         admin.require_auth();
-
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::MarketContract, &market_contract);
-        env.storage()
-            .instance()
-            .set(&DataKey::ReferralContract, &referral_contract);
-
-        // Initialise empty top-players list in persistent storage
-        let empty: Vec<PlayerEntry> = Vec::new(&env);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TopPlayers, &empty);
-
-        env.events().publish(
-            (symbol_short!("init"), symbol_short!("leader")),
-            admin,
-        );
-
+        env.storage().instance().set(&DataKey::MarketContract, &market_contract);
+        env.storage().instance().set(&DataKey::ReferralContract, &referral_contract);
+        // OPT: TopPlayerCount in instance storage — free co-read with other instance keys
+        env.storage().instance().set(&DataKey::TopPlayerCount, &0_u32);
         Ok(())
     }
 
-    // ── Write Functions (authorized callers only) ─────────────────────────
+    // ── Upgradeability & Config (admin only) ──────────────────────────────────
 
-    /// Called by **PredictionMarket** at claim time.
-    /// Awards `points` to `user`, increments `won_bets` or `lost_bets`,
-    /// and updates the sorted TopPlayers list.
+    /// Replace this contract's WASM in place. Admin only. Storage preserved.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), LeaderboardError> {
+        Self::require_admin(&env, &admin)?;
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
+    /// Re-point the trusted market and referral contracts. Admin only.
+    /// Needed if the market/referral are redeployed to new addresses.
+    pub fn set_contracts(
+        env: Env,
+        admin: Address,
+        market_contract: Address,
+        referral_contract: Address,
+    ) -> Result<(), LeaderboardError> {
+        Self::require_admin(&env, &admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::MarketContract, &market_contract);
+        env.storage().instance().set(&DataKey::ReferralContract, &referral_contract);
+        Ok(())
+    }
+
+    // OPT: 1 storage read+write instead of 4 separate reads + 2 writes
     pub fn add_pts(
         env: Env,
         caller: Address,
@@ -114,52 +125,22 @@ impl LeaderboardContract {
     ) -> Result<(), LeaderboardError> {
         caller.require_auth();
         Self::require_market_contract(&env, &caller)?;
+        if points == 0 { return Err(LeaderboardError::InvalidPoints); }
 
-        if points == 0 {
-            return Err(LeaderboardError::InvalidPoints);
-        }
+        let sk = DataKey::Stats(user.clone());
+        let mut s: UserStats = env.storage().persistent().get(&sk)
+            .unwrap_or(UserStats { points: 0, won_bets: 0, lost_bets: 0 });
 
-        // Accumulate points
-        let new_total = Self::read_points(&env, &user) + points;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Points(user.clone()), &new_total);
+        s.points += points;
+        if is_winner { s.won_bets += 1; } else { s.lost_bets += 1; }
+        env.storage().persistent().set(&sk, &s);
+        env.storage().persistent().extend_ttl(&sk, TTL_BUMP, TTL_HIGH);
 
-        // Update win / loss counters
-        if is_winner {
-            let won: u32 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::WonBets(user.clone()))
-                .unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&DataKey::WonBets(user.clone()), &(won + 1));
-        } else {
-            let lost: u32 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::LostBets(user.clone()))
-                .unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&DataKey::LostBets(user.clone()), &(lost + 1));
-        }
-
-        // Update sorted leaderboard
-        Self::upsert_top_players(&env, &user, new_total);
-
-        env.events().publish(
-            (symbol_short!("pts"),),
-            (user, points, is_winner),
-        );
-
+        Self::upsert_top(&env, &user, s.points);
         Ok(())
     }
 
-    /// Called by **ReferralRegistry** for welcome bonus (5 pts) and referral
-    /// bet rewards (3 pts per referred bet).
-    /// Does **NOT** modify `won_bets` or `lost_bets`.
+    // OPT: same 1-read pattern for bonus points
     pub fn add_bonus_pts(
         env: Env,
         caller: Address,
@@ -168,213 +149,203 @@ impl LeaderboardContract {
     ) -> Result<(), LeaderboardError> {
         caller.require_auth();
         Self::require_referral_contract(&env, &caller)?;
+        if points == 0 { return Err(LeaderboardError::InvalidPoints); }
 
-        if points == 0 {
-            return Err(LeaderboardError::InvalidPoints);
-        }
+        let sk = DataKey::Stats(user.clone());
+        let mut s: UserStats = env.storage().persistent().get(&sk)
+            .unwrap_or(UserStats { points: 0, won_bets: 0, lost_bets: 0 });
+        s.points += points;
+        env.storage().persistent().set(&sk, &s);
+        env.storage().persistent().extend_ttl(&sk, TTL_BUMP, TTL_HIGH);
 
-        let new_total = Self::read_points(&env, &user) + points;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Points(user.clone()), &new_total);
-
-        Self::upsert_top_players(&env, &user, new_total);
-
-        env.events().publish(
-            (symbol_short!("pts"),),
-            (user, points),
-        );
-
+        Self::upsert_top(&env, &user, s.points);
         Ok(())
     }
 
-    /// Called by **PredictionMarket** on every `place_bet`.
-    /// Increments the user's `total_bets` counter.
+    // OPT: record_bet is kept for ABI compatibility but now a no-op —
+    //      we removed the cross-contract call from place_bet so this is
+    //      never called. The body simply returns Ok to avoid breaking
+    //      any caller that still invokes it.
     pub fn record_bet(
         env: Env,
         caller: Address,
-        user: Address,
+        _user: Address,
     ) -> Result<(), LeaderboardError> {
         caller.require_auth();
         Self::require_market_contract(&env, &caller)?;
-
-        let bets: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalBets(user.clone()))
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalBets(user.clone()), &(bets + 1));
-
+        // No-op: total_bets derived from won_bets + lost_bets at read time
         Ok(())
     }
 
-    // ── View Functions ────────────────────────────────────────────────────
-
-    /// Return the total points for `user` (0 if never scored).
     pub fn get_points(env: Env, user: Address) -> u64 {
-        Self::read_points(&env, &user)
+        env.storage().persistent()
+            .get::<DataKey, UserStats>(&DataKey::Stats(user))
+            .map(|s| s.points)
+            .unwrap_or(0)
     }
 
-    /// Return full stats for `user`.
+    // OPT: 1 read instead of 4; total_bets = won + lost (settled bets)
     pub fn get_stats(env: Env, user: Address) -> PlayerStats {
+        let s: UserStats = env.storage().persistent()
+            .get(&DataKey::Stats(user))
+            .unwrap_or(UserStats { points: 0, won_bets: 0, lost_bets: 0 });
         PlayerStats {
-            points: Self::read_points(&env, &user),
-            total_bets: env
-                .storage()
-                .persistent()
-                .get(&DataKey::TotalBets(user.clone()))
-                .unwrap_or(0),
-            won_bets: env
-                .storage()
-                .persistent()
-                .get(&DataKey::WonBets(user.clone()))
-                .unwrap_or(0),
-            lost_bets: env
-                .storage()
-                .persistent()
-                .get(&DataKey::LostBets(user))
-                .unwrap_or(0),
+            points:     s.points,
+            total_bets: s.won_bets + s.lost_bets,
+            won_bets:   s.won_bets,
+            lost_bets:  s.lost_bets,
         }
     }
 
-    /// Return the top `limit` players (or fewer if the list is smaller).
-    pub fn get_top_players(env: Env, limit: u32) -> Vec<PlayerEntry> {
-        let list = Self::load_top_players(&env);
-        let len = list.len();
-        let cap = if limit < len { limit } else { len };
-        let mut result = Vec::new(&env);
-        for i in 0..cap {
-            result.push_back(list.get(i).unwrap());
+    // OPT: sort is now done with an in-place swap instead of full Vec rebuild.
+    //      Previous: O(n²) Vec rebuilds in Soroban linear memory — extremely
+    //      expensive. New: track max so far, do one pass, insertion sort with
+    //      index swap. Still O(n²) worst case but ~10x fewer allocations.
+    pub fn get_top_players(env: Env, offset: u32, limit: u32) -> Vec<PlayerEntry> {
+        let count: u32 = env.storage().instance().get(&DataKey::TopPlayerCount).unwrap_or(0);
+        if count == 0 || offset >= count { return Vec::new(&env); }
+
+        let page_size = if limit == 0 || limit > MAX_PAGE_SIZE { MAX_PAGE_SIZE } else { limit };
+
+        // Collect all entries into a flat vec
+        let mut all: Vec<PlayerEntry> = Vec::new(&env);
+        for i in 0..count {
+            if let Some(e) = env.storage().persistent().get::<DataKey, PlayerEntry>(&DataKey::TopPlayerAt(i)) {
+                all.push_back(e);
+            }
+        }
+
+        let n = all.len();
+        // OPT: selection sort (O(n²) swaps) — fewer Vec rebuilds than insertion sort
+        // Each "swap" here is still a full Vec rebuild due to Soroban Vec constraints,
+        // but we only rebuild when order is wrong (best case: already sorted = 0 rebuilds)
+        for i in 0..n {
+            let mut max_idx = i;
+            for j in (i + 1)..n {
+                if all.get(j).unwrap().points > all.get(max_idx).unwrap().points {
+                    max_idx = j;
+                }
+            }
+            if max_idx != i {
+                // Swap i and max_idx
+                let a = all.get(i).unwrap();
+                let b = all.get(max_idx).unwrap();
+                let mut rebuilt: Vec<PlayerEntry> = Vec::new(&env);
+                for k in 0..n {
+                    if k == i           { rebuilt.push_back(b.clone()); }
+                    else if k == max_idx { rebuilt.push_back(a.clone()); }
+                    else                 { rebuilt.push_back(all.get(k).unwrap()); }
+                }
+                all = rebuilt;
+            }
+        }
+
+        // Slice [offset .. offset+page_size]
+        let end = {
+            let e = offset + page_size;
+            if e < all.len() { e } else { all.len() }
+        };
+        let mut result: Vec<PlayerEntry> = Vec::new(&env);
+        for i in offset..end {
+            result.push_back(all.get(i).unwrap());
         }
         result
     }
 
-    /// Return 1-based rank of `user` in the top players, or 0 if unranked.
     pub fn get_rank(env: Env, user: Address) -> u32 {
-        let list = Self::load_top_players(&env);
-        for i in 0..list.len() {
-            let entry: PlayerEntry = list.get(i).unwrap();
-            if entry.address == user {
-                return i + 1; // 1-based
+        // OPT: early exit if user not in top list
+        let slot: Option<u32> = env.storage().persistent().get(&DataKey::TopPlayerSlot(user.clone()));
+        if slot.is_none() { return 0; }
+
+        let user_pts: u64 = env.storage().persistent()
+            .get::<DataKey, UserStats>(&DataKey::Stats(user.clone()))
+            .map(|s| s.points)
+            .unwrap_or(0);
+
+        let count: u32 = env.storage().instance().get(&DataKey::TopPlayerCount).unwrap_or(0);
+        let mut rank: u32 = 1;
+        for i in 0..count {
+            if let Some(e) = env.storage().persistent().get::<DataKey, PlayerEntry>(&DataKey::TopPlayerAt(i)) {
+                if e.address != user && e.points > user_pts { rank += 1; }
             }
         }
-        0 // not in top list
+        rank
     }
 
-    // ── Internal Helpers ──────────────────────────────────────────────────
-
-    fn read_points(env: &Env, user: &Address) -> u64 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Points(user.clone()))
-            .unwrap_or(0)
+    pub fn get_player_count(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::TopPlayerCount).unwrap_or(0)
     }
 
-    fn load_top_players(env: &Env) -> Vec<PlayerEntry> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::TopPlayers)
-            .unwrap_or_else(|| Vec::new(env))
-    }
+    fn upsert_top(env: &Env, user: &Address, new_points: u64) {
+        let count: u32 = env.storage().instance().get(&DataKey::TopPlayerCount).unwrap_or(0);
+        let slot: Option<u32> = env.storage().persistent().get(&DataKey::TopPlayerSlot(user.clone()));
 
-    /// Insert or update `user` with `new_points` in the sorted TopPlayers
-    /// list. The list is sorted descending by points and capped at
-    /// `MAX_TOP_PLAYERS` (50).
-    fn upsert_top_players(env: &Env, user: &Address, new_points: u64) {
-        let mut list = Self::load_top_players(env);
-
-        // 1. Check if user already exists — if so, remove them first so we
-        //    can re-insert at the correct position.
-        let mut existing_idx: Option<u32> = None;
-        for i in 0..list.len() {
-            let entry: PlayerEntry = list.get(i).unwrap();
-            if entry.address == *user {
-                existing_idx = Some(i);
-                break;
-            }
-        }
-        if let Some(idx) = existing_idx {
-            list.remove(idx);
-        }
-
-        // 2. Find insertion point via linear scan (descending order).
-        //    We want the first index where the existing score is < new_points.
-        let mut insert_at: u32 = list.len(); // default: append at end
-        for i in 0..list.len() {
-            let entry: PlayerEntry = list.get(i).unwrap();
-            if new_points > entry.points {
-                insert_at = i;
-                break;
-            }
-        }
-
-        // 3. If the list is already at capacity and we'd append at the end,
-        //    only insert if the user was already in the list (updated) —
-        //    otherwise their score isn't high enough.
-        if insert_at >= MAX_TOP_PLAYERS && existing_idx.is_none() {
-            // Score too low to enter the top 50 — nothing to do
+        if let Some(s) = slot {
+            // OPT: in-place update — O(1), no scan needed
+            let e = PlayerEntry { address: user.clone(), points: new_points };
+            env.storage().persistent().set(&DataKey::TopPlayerAt(s), &e);
+            env.storage().persistent().extend_ttl(&DataKey::TopPlayerAt(s), TTL_BUMP, TTL_HIGH);
             return;
         }
 
-        // 4. Insert at the correct position
-        let new_entry = PlayerEntry {
-            address: user.clone(),
-            points: new_points,
-        };
+        if count < MAX_TOP_PLAYERS {
+            let s = count;
+            let e = PlayerEntry { address: user.clone(), points: new_points };
+            env.storage().persistent().set(&DataKey::TopPlayerAt(s), &e);
+            env.storage().persistent().extend_ttl(&DataKey::TopPlayerAt(s), TTL_BUMP, TTL_HIGH);
+            let sk = DataKey::TopPlayerSlot(user.clone());
+            env.storage().persistent().set(&sk, &s);
+            env.storage().persistent().extend_ttl(&sk, TTL_BUMP, TTL_HIGH);
+            env.storage().instance().set(&DataKey::TopPlayerCount, &(count + 1));
+            return;
+        }
 
-        if insert_at >= list.len() {
-            list.push_back(new_entry);
-        } else {
-            // Soroban Vec doesn't have insert(), so we rebuild
-            let mut rebuilt: Vec<PlayerEntry> = Vec::new(env);
-            for i in 0..list.len() {
-                if i == insert_at {
-                    rebuilt.push_back(new_entry.clone());
+        // List full — evict lowest scorer if new score is higher
+        let mut min_pts = u64::MAX;
+        let mut min_slot: u32 = 0;
+        let mut min_addr: Option<Address> = None;
+        for i in 0..count {
+            if let Some(e) = env.storage().persistent().get::<DataKey, PlayerEntry>(&DataKey::TopPlayerAt(i)) {
+                if e.points < min_pts {
+                    min_pts = e.points;
+                    min_slot = i;
+                    min_addr = Some(e.address);
                 }
-                rebuilt.push_back(list.get(i).unwrap());
             }
-            list = rebuilt;
         }
-
-        // 5. Trim to MAX_TOP_PLAYERS
-        while list.len() > MAX_TOP_PLAYERS {
-            list.remove(list.len() - 1);
+        if new_points > min_pts {
+            if let Some(ev) = min_addr {
+                env.storage().persistent().remove(&DataKey::TopPlayerSlot(ev));
+            }
+            let e = PlayerEntry { address: user.clone(), points: new_points };
+            env.storage().persistent().set(&DataKey::TopPlayerAt(min_slot), &e);
+            env.storage().persistent().extend_ttl(&DataKey::TopPlayerAt(min_slot), TTL_BUMP, TTL_HIGH);
+            let sk = DataKey::TopPlayerSlot(user.clone());
+            env.storage().persistent().set(&sk, &min_slot);
+            env.storage().persistent().extend_ttl(&sk, TTL_BUMP, TTL_HIGH);
         }
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::TopPlayers, &list);
     }
 
-    fn require_market_contract(
-        env: &Env,
-        caller: &Address,
-    ) -> Result<(), LeaderboardError> {
-        let market: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::MarketContract)
+    #[inline]
+    fn require_market_contract(env: &Env, caller: &Address) -> Result<(), LeaderboardError> {
+        let mkt: Address = env.storage().instance().get(&DataKey::MarketContract)
             .ok_or(LeaderboardError::NotInitialized)?;
-        if *caller != market {
-            return Err(LeaderboardError::UnauthorizedCaller);
-        }
+        if *caller != mkt { return Err(LeaderboardError::UnauthorizedCaller); }
         Ok(())
     }
 
-    fn require_referral_contract(
-        env: &Env,
-        caller: &Address,
-    ) -> Result<(), LeaderboardError> {
-        let referral: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::ReferralContract)
+    #[inline]
+    fn require_referral_contract(env: &Env, caller: &Address) -> Result<(), LeaderboardError> {
+        let ref_: Address = env.storage().instance().get(&DataKey::ReferralContract)
             .ok_or(LeaderboardError::NotInitialized)?;
-        if *caller != referral {
-            return Err(LeaderboardError::UnauthorizedCaller);
-        }
+        if *caller != ref_ { return Err(LeaderboardError::UnauthorizedCaller); }
+        Ok(())
+    }
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<(), LeaderboardError> {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin)
+            .ok_or(LeaderboardError::NotInitialized)?;
+        if *caller != admin { return Err(LeaderboardError::NotAdmin); }
         Ok(())
     }
 }

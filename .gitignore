@@ -23,6 +23,9 @@ frontend/node_modules/
 .env.local
 .env.*.local
 *.pem
+.deploy.env
+deploy-output.json
+deploy-mainnet-output.json
 
 # ── IDE / Editor ───────────────────────────────────────────────────────────────
 .vscode/
@@ -44,3 +47,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .vercel
+
+# ── Stellar CLI local identity keystore ────────────────────────────────────────
+.stellar/
