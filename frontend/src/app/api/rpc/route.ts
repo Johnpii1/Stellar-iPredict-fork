@@ -20,10 +20,25 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "edge";
 
 // ── Config (server-side env — NOT exposed to the browser) ─────────────────────
+//
+// Read/write split: reads are high-volume, low-value, idempotent — serve them
+// from the free PUBLIC RPC so we don't burn metered (QuickNode) credits on
+// data that's safe to retry. Writes are low-volume, high-value (a user's bet /
+// claim) — route them to the private RPC for reliability and confirmation speed.
+//
+//   PUBLIC_RPC_URL   → reads  (default: community RPC)
+//   SOROBAN_RPC_URL  → writes (default: same public RPC, until QuickNode set)
+//
+// Set SOROBAN_RPC_URL to your QuickNode endpoint and leave PUBLIC_RPC_URL unset
+// to get the cost-optimal split automatically.
 
-/** The real upstream RPC. Falls back to the public community RPC if unset. */
-const UPSTREAM =
-  process.env.SOROBAN_RPC_URL || "https://mainnet.sorobanrpc.com";
+// Resolve at request-time (not module load) so env is always current.
+function publicRpc(): string {
+  return process.env.PUBLIC_RPC_URL || "https://mainnet.sorobanrpc.com";
+}
+function privateRpc(): string {
+  return process.env.SOROBAN_RPC_URL || publicRpc();
+}
 
 /**
  * Comma-separated list of allowed origins, e.g.
@@ -198,7 +213,7 @@ export async function POST(req: NextRequest) {
       return jsonRpcResponse(body, payload.id, true);
     }
 
-    const fetchPromise = forwardToUpstream(bodyStr)
+    const fetchPromise = forwardToUpstream(bodyStr, publicRpc())
       .then((body) => {
         CACHE.set(key, { body, expiry: Date.now() + READ_TTL_MS });
         pruneCache(Date.now());
@@ -211,15 +226,17 @@ export async function POST(req: NextRequest) {
     return jsonRpcResponse(body, payload.id, false);
   }
 
-  // 5) Writes / tx-status polls: always pass straight through, never cache.
-  const body = await forwardToUpstream(bodyStr);
+  // 5) Uncached: reads (getEvents) → public; writes + tx-status polls → private.
+  //    Writes are the only thing we spend private-RPC credits on.
+  const upstream = WRITE_METHODS.has(method) ? privateRpc() : publicRpc();
+  const body = await forwardToUpstream(bodyStr, upstream);
   return jsonRpcResponse(body, payload.id, false);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-async function forwardToUpstream(bodyStr: string): Promise<string> {
-  const res = await fetch(UPSTREAM, {
+async function forwardToUpstream(bodyStr: string, upstream: string): Promise<string> {
+  const res = await fetch(upstream, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: bodyStr,

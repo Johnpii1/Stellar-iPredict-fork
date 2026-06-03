@@ -4,7 +4,8 @@ import { NextRequest } from "next/server";
 // The route reads env at module-eval for some values and at call-time for
 // others. We set a stable allowlist + upstream before importing the handler.
 vi.stubEnv("ALLOWED_ORIGINS", "https://ipredict-stellar.vercel.app");
-vi.stubEnv("SOROBAN_RPC_URL", "https://upstream.example/rpc");
+vi.stubEnv("SOROBAN_RPC_URL", "https://private.example/rpc"); // writes
+vi.stubEnv("PUBLIC_RPC_URL", "https://public.example/rpc"); // reads
 // Force the production code-path for origin checks (dev allows localhost).
 vi.stubEnv("NODE_ENV", "production");
 
@@ -107,5 +108,25 @@ describe("RPC proxy — read caching / collapsing", () => {
 
     // Each write hits upstream — never collapsed.
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("RPC proxy — read/write routing", () => {
+  it("routes reads to the PUBLIC rpc", async () => {
+    const fetchMock = mockUpstream({ ok: true });
+    await POST(makeReq({ jsonrpc: "2.0", id: 1, method: "simulateTransaction", params: { x: 1 } }, ALLOWED));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://public.example/rpc",
+      expect.anything()
+    );
+  });
+
+  it("routes writes to the PRIVATE rpc", async () => {
+    const fetchMock = mockUpstream({ status: "PENDING" });
+    await POST(makeReq({ jsonrpc: "2.0", id: 1, method: "sendTransaction", params: { tx: "Z" } }, ALLOWED));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://private.example/rpc",
+      expect.anything()
+    );
   });
 });

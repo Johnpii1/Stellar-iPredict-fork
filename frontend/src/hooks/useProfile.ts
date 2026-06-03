@@ -10,10 +10,13 @@ import {
   getEarnings,
   isRegistered,
 } from "@/services/referral";
+import { useVisiblePoll } from "@/hooks/useVisiblePoll";
 import type { PlayerStats, ReferralInfo } from "@/types";
 
-/** Auto-refresh interval (30 s) */
-const POLL_INTERVAL = 30_000;
+// Profile stats refresh on a slow cadence (90s, was 30s) — they only change
+// when the user bets/claims, which already triggers a manual refetch. Polls
+// run only while the tab is visible AND a wallet is connected.
+const POLL_INTERVAL = 90_000;
 
 interface ProfileData {
   stats: PlayerStats | null;
@@ -98,16 +101,14 @@ export function useProfile(publicKey?: string): UseProfileResult {
     };
   }, [fetchData]);
 
-  // Auto-poll every 30 seconds (silent — update values without re-rendering skeleton)
-  useEffect(() => {
-    if (!publicKey) return;
-    const interval = setInterval(() => {
-      if (initialLoadDone.current) {
-        fetchData(true);
-      }
-    }, POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [fetchData, publicKey]);
+  // Auto-poll while visible AND connected (silent). Pauses when hidden.
+  useVisiblePoll(
+    () => {
+      if (initialLoadDone.current) fetchData(true);
+    },
+    POLL_INTERVAL,
+    !!publicKey
+  );
 
   const refetch = useCallback(() => {
     fetchData(true); // Always silent on manual refetch (data already visible)

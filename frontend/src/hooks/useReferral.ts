@@ -9,10 +9,12 @@ import {
   isRegistered,
 } from "@/services/referral";
 import * as cache from "@/services/cache";
+import { useVisiblePoll } from "@/hooks/useVisiblePoll";
 import type { ReferralInfo } from "@/types";
 
-/** Auto-refresh interval (30 s) */
-const POLL_INTERVAL = 30_000;
+// Referral data (counts, earnings) changes only when a referred user bets —
+// infrequent. Poll slowly (120s, was 30s), only while visible AND connected.
+const POLL_INTERVAL = 120_000;
 
 interface UseReferralResult {
   data: ReferralInfo | null;
@@ -78,16 +80,14 @@ export function useReferral(publicKey?: string): UseReferralResult {
     };
   }, [fetchData]);
 
-  // Auto-poll every 30 seconds (silent — no skeleton flash)
-  useEffect(() => {
-    if (!publicKey) return;
-    const interval = setInterval(() => {
-      if (initialLoadDone.current) {
-        fetchData(true);
-      }
-    }, POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [fetchData, publicKey]);
+  // Auto-poll while visible AND connected (silent). Pauses when hidden.
+  useVisiblePoll(
+    () => {
+      if (initialLoadDone.current) fetchData(true);
+    },
+    POLL_INTERVAL,
+    !!publicKey
+  );
 
   const refetch = useCallback(() => {
     // Clear referral-related caches so fresh data is fetched

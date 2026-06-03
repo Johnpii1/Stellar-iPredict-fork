@@ -5,6 +5,7 @@ import { getTopPlayers, getStats } from "@/services/leaderboard";
 import { getMarkets, getMarketBettors } from "@/services/market";
 import { getDisplayName } from "@/services/referral";
 import * as cache from "@/services/cache";
+import { useVisiblePoll } from "@/hooks/useVisiblePoll";
 import type { PlayerStats } from "@/types";
 
 /** Cache key for the assembled leaderboard (used for instant stale-seed). */
@@ -12,8 +13,10 @@ const LB_CACHE_KEY = "lb_assembled";
 
 export type LeaderboardTab = "top_predictors" | "most_active" | "top_referrers";
 
-/** Auto-refresh interval (30 s) */
-const POLL_INTERVAL = 30_000;
+// This poll is the HEAVIEST in the app (it fans out getMarketBettors across all
+// markets). Rankings barely move minute-to-minute, so poll slowly (120s, was
+// 30s) and only while the tab is visible.
+const POLL_INTERVAL = 120_000;
 
 interface UseLeaderboardResult {
   data: PlayerStats[];
@@ -138,15 +141,10 @@ export function useLeaderboard(
     };
   }, [fetchData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-poll every 30 seconds (silent — no skeleton flash)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (initialLoadDone.current) {
-        fetchData(true);
-      }
-    }, POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  // Auto-poll while visible (silent). Pauses when the tab is hidden.
+  useVisiblePoll(() => {
+    if (initialLoadDone.current) fetchData(true);
+  }, POLL_INTERVAL);
 
   // Re-sort when tab or allPlayers changes
   useEffect(() => {

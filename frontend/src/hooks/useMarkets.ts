@@ -3,10 +3,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getMarkets } from "@/services/market";
 import * as cache from "@/services/cache";
+import { useVisiblePoll } from "@/hooks/useVisiblePoll";
 import type { Market, MarketFilter, MarketSort } from "@/types";
 
 // ── Ending-soon threshold: markets expiring within 24 hours ───────────────────
 const ENDING_SOON_MS = 24 * 60 * 60 * 1000;
+
+// Poll cadence while the tab is visible. 90s (was 30s) — markets change on the
+// timescale of bets, not seconds, so this is plenty fresh while cutting idle
+// RPC load 3x. Polling fully pauses when the tab is hidden (useVisiblePoll).
+const POLL_INTERVAL = 90_000;
 
 interface UseMarketsResult {
   data: Market[];
@@ -117,13 +123,9 @@ export function useMarkets(
     };
   }, [fetchMarkets]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-poll every 30 seconds (silent refresh — no skeleton flash)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchMarkets(true);
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchMarkets]);
+  // Auto-poll while visible (silent refresh — no skeleton flash). Pauses
+  // entirely when the tab is hidden, so a forgotten open tab costs nothing.
+  useVisiblePoll(() => fetchMarkets(true), POLL_INTERVAL);
 
   // Re-apply filter/sort when allMarkets, filter, or sort changes
   useEffect(() => {
