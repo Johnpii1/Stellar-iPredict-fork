@@ -9,7 +9,7 @@ import {
   xdr,
   scValToNative,
 } from "@stellar/stellar-sdk";
-import { NETWORK, ADMIN_PUBLIC_KEY, SPONSOR_SECRET_KEY } from "@/config/network";
+import { NETWORK, ADMIN_PUBLIC_KEY, SPONSOR_SECRET_KEY, resolveSorobanUrl } from "@/config/network";
 import { AppErrorType } from "@/types";
 import type { AppError, TransactionResult } from "@/types";
 import * as cache from "@/services/cache";
@@ -49,8 +49,12 @@ let _horizonServer: Horizon.Server | null = null;
  */
 export function getSorobanServer(): rpc.Server {
   if (!_sorobanServer) {
-    _sorobanServer = new rpc.Server(NETWORK.sorobanUrl, {
-      allowHttp: NETWORK.sorobanUrl.startsWith("http://"),
+    // Resolve at call-time (not module-eval) so the browser correctly picks the
+    // same-origin /api/rpc proxy even if this module was first imported on the
+    // server. NETWORK.sorobanUrl already does the browser-vs-server selection.
+    const url = resolveSorobanUrl();
+    _sorobanServer = new rpc.Server(url, {
+      allowHttp: url.startsWith("http://"),
     });
   }
   return _sorobanServer;

@@ -10,6 +10,39 @@
 
 const isTestnet = process.env.NEXT_PUBLIC_NETWORK === "testnet";
 
+/**
+ * Resolve the Soroban RPC URL the SDK talks to.
+ *
+ * In the BROWSER we route through our own same-origin proxy at `/api/rpc`
+ * (see src/app/api/rpc/route.ts). That proxy:
+ *   • keeps the real (paid) RPC URL server-side, off the public bundle,
+ *   • only accepts requests from our own deployed origin,
+ *   • collapses duplicate read bursts into one upstream call.
+ *
+ * On the SERVER (SSR / route handlers) and during build we hit the real RPC
+ * directly — there's no `window`, and the proxy itself runs server-side.
+ *
+ * Set NEXT_PUBLIC_RPC_PROXY=off to bypass the proxy and talk to the RPC
+ * directly from the browser (useful for local debugging).
+ */
+export function resolveSorobanUrl(): string {
+  const direct =
+    process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ||
+    (isTestnet
+      ? "https://soroban-testnet.stellar.org"
+      : "https://mainnet.sorobanrpc.com");
+
+  const proxyDisabled = process.env.NEXT_PUBLIC_RPC_PROXY === "off";
+  const inBrowser = typeof window !== "undefined";
+
+  if (inBrowser && !proxyDisabled) {
+    // The Stellar SDK's rpc.Server does `new URL(...)` internally, which throws
+    // on a relative path — so build an absolute same-origin URL.
+    return `${window.location.origin}/api/rpc`;
+  }
+  return direct;
+}
+
 export const NETWORK = {
   name: isTestnet ? "testnet" : "mainnet",
   url: process.env.NEXT_PUBLIC_HORIZON_URL ||
@@ -20,10 +53,7 @@ export const NETWORK = {
     (isTestnet
       ? "Test SDF Network ; September 2015"
       : "Public Global Stellar Network ; September 2015"),
-  sorobanUrl: process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ||
-    (isTestnet
-      ? "https://soroban-testnet.stellar.org"
-      : "https://mainnet.sorobanrpc.com"),
+  sorobanUrl: resolveSorobanUrl(),
   // Friendbot only exists on testnet — undefined on mainnet (not used)
   friendbotUrl: isTestnet
     ? (process.env.NEXT_PUBLIC_FRIENDBOT_URL || "https://friendbot.stellar.org")
