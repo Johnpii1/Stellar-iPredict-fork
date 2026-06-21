@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { FiX } from "react-icons/fi";
 import WalletConnect from "@/components/wallet/WalletConnect";
@@ -55,9 +56,15 @@ export default function MobileMenu({ isOpen, onClose }: MobileMenuProps) {
       >
         {/* Close button */}
         <div className="flex items-center justify-between h-16 px-4 border-b border-surface-border">
-          <span className="font-heading font-bold text-lg text-gradient">
-            iPredict
-          </span>
+          <Link href="/" onClick={onClose} aria-label="iPredict home" className="select-none">
+            <Image
+              src="/logo.png"
+              alt="iPredict"
+              width={36}
+              height={36}
+              className="rounded-lg"
+            />
+          </Link>
           <button
             onClick={onClose}
             className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-surface-hover transition-colors"

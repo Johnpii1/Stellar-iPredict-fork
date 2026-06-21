@@ -11,6 +11,7 @@ import {
   FiLock,
   FiSmartphone,
   FiArrowRight,
+  FiCheck,
 } from "react-icons/fi";
 import ErrorBoundary from "@/components/ui/ErrorBoundary";
 import FeaturedMarkets from "./FeaturedMarkets";
@@ -54,11 +55,12 @@ const EXTRA_FEATURES = [
 ];
 
 const ROADMAP = [
-  { date: "Feb 2026", title: "Foundation", desc: "MVP launch, testnet, core markets" },
-  { date: "Q2 2026", title: "Growth", desc: "User-created markets, oracle resolution, categories" },
-  { date: "Q3 2026", title: "Token Utility", desc: "IPREDICT staking, governance, rewards tiers" },
-  { date: "Q4 2026", title: "Scale", desc: "Mainnet launch, mobile app, cross-chain" },
-];
+  { date: "Feb 2026", title: "Foundation", desc: "MVP launch, testnet, core markets", status: "done" },
+  { date: "Jun 2026", title: "Mainnet Live", desc: "Shipped on Stellar mainnet — real bets, real payouts", status: "done" },
+  { date: "Q3 2026", title: "Token Utility", desc: "IPREDICT staking, governance, rewards tiers", status: "current" },
+  { date: "Q4 2026", title: "Scale", desc: "Mobile app, market categories, cross-chain", status: "upcoming" },
+  { date: "2027", title: "Ecosystem", desc: "User-created markets, oracle resolution, partner integrations", status: "upcoming" },
+] as const;
 
 /* ─────────────────── Page Component ─────────────────── */
 
@@ -220,16 +222,31 @@ export default function HomePage() {
                 <div className="relative z-10">
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold ${
-                      i === 0
-                        ? "bg-primary-600 text-white"
+                      r.status === "done"
+                        ? "bg-accent-green/15 border border-accent-green/40 text-accent-green"
+                        : r.status === "current"
+                        ? "bg-primary-600 text-white ring-4 ring-primary-500/20"
                         : "bg-surface-card border border-surface-border text-slate-500"
                     }`}
                   >
-                    {i + 1}
+                    {r.status === "done" ? <FiCheck className="w-4 h-4" /> : i + 1}
                   </div>
                 </div>
                 <div className="pt-1.5">
-                  <span className="text-xs text-primary-400 font-medium">{r.date}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-primary-400 font-medium">{r.date}</span>
+                    {r.status === "current" && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-500/10 text-[10px] font-semibold uppercase tracking-wide text-primary-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
+                        In Progress
+                      </span>
+                    )}
+                    {r.status === "done" && (
+                      <span className="px-2 py-0.5 rounded-full bg-accent-green/10 text-[10px] font-semibold uppercase tracking-wide text-accent-green">
+                        Shipped
+                      </span>
+                    )}
+                  </div>
                   <h3 className="font-heading font-semibold text-lg">{r.title}</h3>
                   <p className="text-sm text-slate-400 mt-0.5">{r.desc}</p>
                 </div>

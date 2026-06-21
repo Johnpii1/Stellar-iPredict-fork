@@ -42,19 +42,17 @@ export default function Navbar() {
           {/* Logo */}
           <Link
             href="/"
-            className="flex items-center gap-2 select-none"
+            className="flex items-center select-none transition-transform duration-200 hover:scale-105"
+            aria-label="iPredict home"
           >
             <Image
               src="/logo.png"
-              alt="iPredict logo"
-              width={32}
-              height={32}
+              alt="iPredict"
+              width={40}
+              height={40}
               priority
               className="rounded-lg"
             />
-            <span className="font-heading font-bold text-xl text-gradient">
-              iPredict
-            </span>
           </Link>
 
           {/* Desktop nav links */}

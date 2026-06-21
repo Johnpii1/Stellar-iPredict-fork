@@ -1,5 +1,6 @@
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { FiTwitter, FiGithub, FiMessageCircle } from "react-icons/fi";
 
 const PRODUCT_LINKS = [
@@ -108,9 +109,16 @@ export default function Footer() {
         <div className="border-t border-surface-border pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <Link
             href="/"
-            className="font-heading font-bold text-lg text-gradient"
+            className="select-none transition-transform duration-200 hover:scale-105"
+            aria-label="iPredict home"
           >
-            iPredict
+            <Image
+              src="/logo.png"
+              alt="iPredict"
+              width={36}
+              height={36}
+              className="rounded-lg"
+            />
           </Link>
           <p className="text-sm text-slate-600">
             &copy; {new Date().getFullYear()} iPredict. Built on Stellar/Soroban.
