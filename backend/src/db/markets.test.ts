@@ -1,66 +1,67 @@
-import { describe, it, expect, vi } from "vitest";
-import { getMarketById, type Market } from "./markets";
+import { describe, expect, it, vi } from "vitest";
 
-const baseRow = {
-  id: 1,
-  question: "Will BTC hit $150k?",
-  image_url: "https://example.com/btc.png",
-  category: "Crypto",
-  end_time: 1700000000,
-  total_yes: 100,
-  total_no: 50,
-  resolved: false,
-  outcome: null as boolean | null,
-  cancelled: false,
-  creator: "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
-  bet_count: 10,
-  created_at: new Date("2026-01-01T00:00:00Z"),
-  updated_at: new Date("2026-01-02T00:00:00Z"),
-};
+import { getMarkets, type MarketRow, type Queryable } from "./markets";
 
-function createMockPool(rows: unknown[]): unknown {
-  return {
-    query: () => Promise.resolve({ rows }),
-  };
-}
+describe("getMarkets", () => {
+  it("returns paginated markets rows and total count", async () => {
+    const marketRows: MarketRow[] = [
+      {
+        id: 42,
+        question: "Will XLM close above $1 by year end?",
+        image_url: null,
+        category: "Crypto",
+        end_time: "1735689600",
+        total_yes: "10.0000000",
+        total_no: "5.0000000",
+        resolved: false,
+        outcome: null,
+        cancelled: false,
+        creator: "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        bet_count: 3,
+        created_at: new Date("2026-01-01T00:00:00.000Z"),
+        updated_at: new Date("2026-01-01T00:00:00.000Z")
+      }
+    ];
 
-describe("getMarketById", () => {
-  it("returns a market when found", async () => {
-    const pool = createMockPool([baseRow]) as Parameters<typeof getMarketById>[0];
-    const market = await getMarketById(pool, 1);
+    const queryMock = vi
+      .fn<Queryable["query"]>()
+      .mockResolvedValueOnce({ rows: marketRows })
+      .mockResolvedValueOnce({ rows: [{ total: 17 }] });
 
-    expect(market).not.toBeNull();
-    expect(market!.id).toBe(1);
-    expect(market!.question).toBe("Will BTC hit $150k?");
-    expect(market!.imageUrl).toBe("https://example.com/btc.png");
-    expect(market!.category).toBe("Crypto");
-    expect(market!.endTime).toBe(1700000000);
-    expect(market!.totalYes).toBe(100);
-    expect(market!.totalNo).toBe(50);
-    expect(market!.resolved).toBe(false);
-    expect(market!.outcome).toBeNull();
-    expect(market!.cancelled).toBe(false);
-    expect(market!.creator).toBe("GABCDEFGHIJKLMNOPQRSTUVWXYZ234567");
-    expect(market!.betCount).toBe(10);
-    expect(market!.createdAt).toEqual(baseRow.created_at);
-    expect(market!.updatedAt).toEqual(baseRow.updated_at);
-  });
+    const db: Queryable = {
+      query: <T>(text: string, values?: unknown[]) =>
+        queryMock(text, values) as Promise<{ rows: T[] }>
+    };
 
-  it("returns null when no market matches the ID", async () => {
-    const pool = createMockPool([]) as Parameters<typeof getMarketById>[0];
-    const market = await getMarketById(pool, 999);
-    expect(market).toBeNull();
-  });
+    const result = await getMarkets(
+      {
+        filter: "active",
+        category: "Crypto",
+        sort: "volume",
+        page: 2,
+        limit: 10
+      },
+      db
+    );
 
-  it("uses a parameterized query with the provided ID", async () => {
-    const queryMock = vi.fn().mockResolvedValue({ rows: [baseRow] });
-    const pool = { query: queryMock } as unknown as Parameters<typeof getMarketById>[0];
+    expect(queryMock).toHaveBeenCalledTimes(2);
 
-    await getMarketById(pool, 42);
+    const firstCall = queryMock.mock.calls[0];
+    expect(firstCall[0]).toContain("FROM markets");
+    expect(firstCall[0]).toContain("WHERE category = $1");
+    expect(firstCall[0]).toContain("resolved = false");
+    expect(firstCall[0]).toContain("ORDER BY (total_yes + total_no) DESC");
+    expect(firstCall[1]).toEqual(["Crypto", 10, 10]);
 
-    expect(queryMock).toHaveBeenCalledTimes(1);
-    const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain("WHERE id = $1");
-    expect(params).toEqual([42]);
+    const secondCall = queryMock.mock.calls[1];
+    expect(secondCall[0]).toContain("SELECT COUNT(*)::INT AS total");
+    expect(secondCall[1]).toEqual(["Crypto"]);
+
+    expect(result).toEqual({
+      rows: marketRows,
+      total: 17,
+      page: 2,
+      limit: 10
+    });
   });
 });
