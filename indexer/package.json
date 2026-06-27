@@ -12,7 +12,7 @@
   "devDependencies": {
     "typescript": "^5.5.4",
     "vitest": "^2.1.9"
- 
+
   "description": "iPredict Soroban event indexer — writes on-chain events to PostgreSQL",
   "type": "module",
   "engines": {
