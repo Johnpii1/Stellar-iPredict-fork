@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { config } from "../config/index.js";
 
 export type MarketFilter = "active" | "resolved" | "ended" | "cancelled" | "all";
 export type MarketSort = "newest" | "volume" | "ending_soon" | "bettors";
@@ -40,7 +41,7 @@ export type Queryable = {
   query<T>(text: string, values?: unknown[]): Promise<{ rows: T[] }>;
 };
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({ connectionString: config.DATABASE_URL });
 
 const ORDER_BY: Record<MarketSort, string> = {
   newest: "created_at DESC",

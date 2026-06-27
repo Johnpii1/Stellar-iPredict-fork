@@ -8,7 +8,9 @@
  * Run: `npm run dev`
  */
 
-const PORT = Number(process.env.PORT ?? 4000);
+import { config } from "./config/index.js";
+
+const PORT = config.PORT;
 
 async function main(): Promise<void> {
   // TODO(#scaffold): replace with the Fastify server from `src/server.ts`
