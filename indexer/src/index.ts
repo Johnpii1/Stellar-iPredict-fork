@@ -1,3 +1,15 @@
+
+import { handleMarketCancelledEvent } from "./handlers/market_cancelled.js";
+import type { DbClient, DecodedContractEvent, RedisClient } from "./types.js";
+
+export async function writeEventToDb(event: DecodedContractEvent, db: DbClient, redis: RedisClient): Promise<void> {
+  const [domain, action] = event.topics;
+
+  if (domain === "mkt" && action === "cancelled") {
+    await handleMarketCancelledEvent(event, db, redis);
+  }
+}
+
 import { Pool } from "pg";
 import { rebuildLeaderboardTable } from "./leaderboard-rebuild.js";
 import { createLogger, logIterationSummary, parseLogLevel } from "./log.js";
@@ -108,3 +120,4 @@ main().catch((err) => {
   console.error("[ipredict-indexer] fatal:", err);
   process.exit(1);
 });
+

@@ -2,6 +2,17 @@
   "name": "ipredict-indexer",
   "version": "0.1.0",
   "private": true,
+
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.9"
+ 
   "description": "iPredict Soroban event indexer — writes on-chain events to PostgreSQL",
   "type": "module",
   "engines": {
@@ -28,5 +39,6 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"
+
   }
 }
