@@ -62,8 +62,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await pool.end();
-  await container.stop();
+  if (pool) {
+    await pool.end();
+  }
+  if (container) {
+    await container.stop();
+  }
 });
 
 describe("leaderboard-rebuild integration", () => {

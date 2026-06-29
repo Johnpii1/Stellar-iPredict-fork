@@ -40,3 +40,36 @@ export const marketCancelledPayloadSchema = schema((value: unknown) => {
 });
 
 export type MarketCancelledPayload = Infer<typeof marketCancelledPayloadSchema>;
+
+export const referralRewardPayloadSchema = schema((value: unknown) => {
+  let candidate: any = value;
+  if (Array.isArray(value)) {
+    candidate = {
+      referrer: value[0],
+      points: value[1] !== undefined ? value[1] : undefined
+    };
+  }
+
+  if (candidate === null || typeof candidate !== "object") {
+    throw new ZodValidationError("referral_reward payload must be an object or tuple");
+  }
+
+  const referrer = candidate.referrer;
+  if (typeof referrer !== "string" || !/^[GC][A-Z2-7]{55}$/.test(referrer)) {
+    throw new ZodValidationError("referrer must be a valid Stellar address");
+  }
+
+  let points = 3;
+  if (candidate.points !== undefined && candidate.points !== null) {
+    const p = Number(candidate.points);
+    if (!Number.isSafeInteger(p) || p <= 0) {
+      throw new ZodValidationError("points must be a positive integer");
+    }
+    points = p;
+  }
+
+  return { referrer, points };
+});
+
+export type ReferralRewardPayload = Infer<typeof referralRewardPayloadSchema>;
+
