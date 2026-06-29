@@ -108,7 +108,7 @@ describe("runPollLoop", () => {
     );
 
     // First poll fires immediately
-    await vi.runAllTimersAsync();
+    await Promise.resolve();
     expect(rpc.getEvents).toHaveBeenCalledTimes(1);
 
     // Advance past the interval to trigger a second poll
@@ -134,7 +134,7 @@ describe("runPollLoop", () => {
       controller.signal
     );
 
-    await vi.runAllTimersAsync();
+    await Promise.resolve();
     expect(rpc.getEvents).toHaveBeenCalledTimes(1);
 
     // Advance past the interval — second call should succeed
