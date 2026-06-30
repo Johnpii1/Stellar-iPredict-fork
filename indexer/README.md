@@ -55,6 +55,25 @@ npm install
 npm run dev
 ```
 
+## Metrics & observability
+
+The indexer maintains lightweight, dependency-free in-process counters in
+[`src/metrics.ts`](src/metrics.ts). They can be logged or exported to whatever
+sink the deployment uses (see the metric catalogue in
+[`docs/ORACLE_AND_BACKEND.md`](../docs/ORACLE_AND_BACKEND.md#monitoring)).
+
+| Metric | Type | Description |
+| --- | --- | --- |
+| `events_processed_total` (`metrics.eventsProcessed`) | counter | Incremented once per contract event the indexer successfully handles. |
+
+**Runbook — reading `events_processed_total`:** the counter lives in process
+memory and increments inside the event router (`writeEventToDb`) each time a
+recognised event (e.g. `mkt:cancelled`, `referral:reward`) is handled.
+Unrecognised events are skipped and not counted. To observe it, read
+`metrics.eventsProcessed.get()` from the running process (or wire it into your
+metrics exporter); a flat counter while the chain is producing events indicates
+the indexer is stalled or only seeing unrecognised event types.
+
 ## Contributing
 
 Pick an open issue labelled `area:indexer`, claim it, branch off

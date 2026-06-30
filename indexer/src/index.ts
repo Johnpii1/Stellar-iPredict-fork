@@ -89,19 +89,10 @@ export function installShutdownHandlers(indexer: Indexer): void {
 }
 
 
-import { handleMarketCancelledEvent } from "./handlers/market_cancelled.js";
-import { handleReferralRewardEvent } from "./handlers/referral_reward.js";
-import type { DbClient, DecodedContractEvent, RedisClient } from "./types.js";
-
-export async function writeEventToDb(event: DecodedContractEvent, db: DbClient, redis: RedisClient): Promise<void> {
-  const [domain, action] = event.topics;
-
-  if (domain === "mkt" && action === "cancelled") {
-    await handleMarketCancelledEvent(event, db, redis);
-  } else if (domain === "referral" && action === "reward") {
-    await handleReferralRewardEvent(event, db, redis);
-  }
-}
+// Re-exported from ./event-router.js so existing importers keep working while
+// the dispatcher lives in a side-effect-free module that can be unit-tested
+// without triggering this file's CLI entrypoint below.
+export { writeEventToDb } from "./event-router.js";
 
 import { Pool } from "pg";
 import { rebuildLeaderboardTable } from "./leaderboard-rebuild.js";
