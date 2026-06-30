@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "rebuild:leaderboard": "tsx src/index.ts"
+    "rebuild:leaderboard": "tsx src/index.ts",
+    "backfill:bet-count": "tsx src/backfill-bet-count.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.5.0",
