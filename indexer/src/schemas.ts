@@ -73,3 +73,97 @@ export const referralRewardPayloadSchema = schema((value: unknown) => {
 
 export type ReferralRewardPayload = Infer<typeof referralRewardPayloadSchema>;
 
+const STELLAR_ADDRESS = /^[GC][A-Z2-7]{55}$/;
+const DISPLAY_NAME_MAX = 50; // leaderboard.display_name is VARCHAR(50)
+
+// Welcome bonus credited to the registrant on first registration (contract:
+// WELCOME_BONUS_POINTS). The registration-time bonus credited to the referrer
+// is kept in lockstep with the leaderboard-rebuild reducer so incremental
+// writes and full replays converge on the same snapshot.
+const DEFAULT_WELCOME_POINTS = 5;
+const DEFAULT_REFERRER_POINTS = 5;
+
+function parsePoints(value: unknown, fallback: number, label: string): number {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new ZodValidationError(`${label} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseDisplayName(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new ZodValidationError("display_name must be a string");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (trimmed.length > DISPLAY_NAME_MAX) {
+    throw new ZodValidationError(`display_name must be at most ${DISPLAY_NAME_MAX} characters`);
+  }
+  return trimmed;
+}
+
+export const referralRegisteredPayloadSchema = schema((value: unknown) => {
+  // On-chain shape: register_referral(user, display_name, referrer?).
+  let candidate: any = value;
+  if (Array.isArray(value)) {
+    candidate = {
+      user: value[0],
+      display_name: value[1],
+      referrer: value[2],
+    };
+  }
+
+  if (candidate === null || typeof candidate !== "object") {
+    throw new ZodValidationError("referral_registered payload must be an object or tuple");
+  }
+
+  const user = candidate.user ?? candidate.address ?? candidate.registrant;
+  if (typeof user !== "string" || !STELLAR_ADDRESS.test(user)) {
+    throw new ZodValidationError("user must be a valid Stellar address");
+  }
+
+  const displayName = parseDisplayName(candidate.display_name ?? candidate.displayName ?? candidate.name);
+
+  let referrer: string | null = null;
+  const rawReferrer = candidate.referrer ?? candidate.referrer_address;
+  if (rawReferrer !== undefined && rawReferrer !== null) {
+    if (typeof rawReferrer !== "string" || !STELLAR_ADDRESS.test(rawReferrer)) {
+      throw new ZodValidationError("referrer must be a valid Stellar address");
+    }
+    if (rawReferrer === user) {
+      throw new ZodValidationError("referrer must not equal user (self-referral)");
+    }
+    referrer = rawReferrer;
+  }
+
+  const welcomePoints = parsePoints(
+    candidate.welcome_bonus_points ?? candidate.welcome_points ?? candidate.points,
+    DEFAULT_WELCOME_POINTS,
+    "welcome_bonus_points",
+  );
+  const referrerPoints = parsePoints(
+    candidate.referrer_bonus_points ?? candidate.bonus_points ?? candidate.referral_points,
+    DEFAULT_REFERRER_POINTS,
+    "referrer_bonus_points",
+  );
+
+  return {
+    user,
+    display_name: displayName,
+    referrer,
+    welcome_points: welcomePoints,
+    referrer_points: referrerPoints,
+  };
+});
+
+export type ReferralRegisteredPayload = Infer<typeof referralRegisteredPayloadSchema>;
+

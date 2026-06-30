@@ -1,6 +1,7 @@
 
 import { persistDeadLetterEvent } from "./deadLetter.js";
 import { recomputeMarketTotalsFromBets } from "./recomputeTotals.js";
+import { recomputeMarketBetCountsFromBets } from "./recomputeBetCounts.js";
 import type { Closable, Queryable } from "./db.js";
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 5_000);
@@ -19,6 +20,7 @@ export interface IndexerRuntime {
   writeEventToDb(event: DecodedEvent): Promise<void>;
   sleep(ms: number): Promise<void>;
   recomputeTotals?: boolean;
+  recomputeBetCounts?: boolean;
 }
 
 export interface RawEvent { ledger: number; txHash: string; [key: string]: unknown }
@@ -66,6 +68,7 @@ export class Indexer {
     this.lastLedger = response.latestLedger;
     await this.runtime.saveCheckpoint(this.lastLedger);
     if (this.runtime.recomputeTotals) await recomputeMarketTotalsFromBets(this.runtime.db);
+    if (this.runtime.recomputeBetCounts) await recomputeMarketBetCountsFromBets(this.runtime.db);
     return this.lastLedger;
   }
 
