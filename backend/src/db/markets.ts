@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { config } from "../config/index.js";
+import { MarketRow } from "./types.js";
 
 export type MarketFilter = "active" | "resolved" | "ended" | "cancelled" | "all";
 export type MarketSort = "newest" | "volume" | "ending_soon" | "bettors";
@@ -13,22 +14,8 @@ export type GetMarketsInput = {
   limit?: number;
 };
 
-export type MarketRow = {
-  id: number;
-  question: string;
-  image_url: string | null;
-  category: string;
-  end_time: string;
-  total_yes: string;
-  total_no: string;
-  resolved: boolean;
-  outcome: boolean | null;
-  cancelled: boolean;
-  creator: string;
-  bet_count: number;
-  created_at: Date;
-  updated_at: Date;
-};
+// Re-export for backwards compatibility
+export type { MarketRow };
 
 export type GetMarketsResult = {
   rows: MarketRow[];

@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { BetRow } from "./types.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,15 +20,8 @@ export interface PaginatedBets {
   totalPages: number;
 }
 
-export interface BetRow {
-  market_id: string;
-  bettor: string;
-  net_amount: string;
-  gross_amount: string;
-  is_yes: boolean;
-  claimed: boolean;
-  created_at: Date;
-}
+// Re-export for backwards compatibility
+export type { BetRow };
 
 // ── Module-private store ───────────────────────────────────────────────────────
 

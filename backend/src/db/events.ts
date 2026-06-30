@@ -3,6 +3,8 @@
  * Writes raw event rows to the database
  */
 
+import { EventRow } from "./types.js";
+
 interface Event {
   txHash: string;
   logIndex: number;

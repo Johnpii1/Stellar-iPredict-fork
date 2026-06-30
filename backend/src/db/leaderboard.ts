@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { LeaderboardRow } from "./types.js";
 
 export type SortOption = "points" | "bets";
 
@@ -8,14 +9,8 @@ export interface GetLeaderboardParams {
   sort: SortOption;
 }
 
-export interface LeaderboardRow {
-  address: string;
-  display_name: string | null;
-  points: string;
-  won_bets: number;
-  lost_bets: number;
-  updated_at: Date;
-}
+// Re-export for backwards compatibility
+export type { LeaderboardRow };
 
 /** Persistent leaderboard record for a single player. */
 export interface LeaderboardEntry {
